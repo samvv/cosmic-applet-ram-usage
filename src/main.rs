@@ -127,6 +127,7 @@ impl cosmic::Application for Window {
             sys: System::new(),
             standard_model,
             seconds_tx: watch::Sender::new(DEFAULT_UPDATE_INTERVAL),
+            interval: DEFAULT_UPDATE_INTERVAL.to_string(),
             ..Default::default() // Set everything else to the default values
         };
 
