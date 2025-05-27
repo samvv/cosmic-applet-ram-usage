@@ -12,7 +12,7 @@ in real-time.
      - Update interval (in milliseconds)
      - Display in bytes, kilobytes, kibibits, kilobits, and so on
 
-## Installationa
+## Installation
 
 This program is in alpha and no release has been made available just yet.
 
