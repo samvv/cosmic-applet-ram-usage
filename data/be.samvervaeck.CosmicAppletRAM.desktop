@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=RAM Usage
+Type=Application
+Exec=cosmic-applet-ram
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Iced;
+# Translators: Do NOT translate or transliterate this text (this is an icon file name)!
+Icon=be.samvervaeck.CosmicAppletRAM-symbolic
+NoDisplay=true
+X-CosmicApplet=true
+X-HostWaylandDisplay=true
+X-CosmicHoverPopup=Auto
+# No shrink priority, as this applet is always visible when configured
