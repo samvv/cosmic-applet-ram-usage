@@ -3,6 +3,8 @@
 This repository hosts a small applet for [COSMIC][1] that allows you to monitor your RAM usage
 in real-time.
 
+[1]: https://system76.com/cosmic/
+
 ![screenshot](https://github.com/samvv/cosmic-applet-ram-usage/blob/main/screenshot.png?raw=true)
 
 **Features**
