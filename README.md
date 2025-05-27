@@ -3,6 +3,8 @@
 This repository hosts a small applet for [COSMIC][1] that allows you to monitor your RAM usage
 in real-time.
 
+![screenshot](https://github.com/samvv/cosmic-applet-ram-usage/blob/main/screenshot.png?raw=true)
+
 **Features**
 
  - Fully written in Rust
