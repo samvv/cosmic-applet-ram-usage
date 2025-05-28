@@ -3,8 +3,8 @@
 use cosmic::app::Core;
 use cosmic::applet::cosmic_panel_config::PanelAnchor;
 use cosmic::cosmic_config::cosmic_config_derive::CosmicConfigEntry;
-use cosmic::cosmic_config::{self, ConfigGet}; // Necessary for CosmicConfigEntry derivation to work
-use cosmic::cosmic_config::{Config, ConfigSet, CosmicConfigEntry};
+use cosmic::cosmic_config; // Necessary for CosmicConfigEntry derivation to work
+use cosmic::cosmic_config::{Config, CosmicConfigEntry};
 use cosmic::iced::advanced::widget;
 use cosmic::iced::futures::SinkExt;
 use cosmic::iced::Alignment::Center;
@@ -44,20 +44,23 @@ const DEFAULT_UPDATE_INTERVAL: u64 = 1000;
 *  Next we have our custom field that we will manipulate the value of based
 *  on the message we send.
 */
-#[derive(Default)]
 struct Window {
     core: Core,
     popup: Option<window::Id>,
     sys: sysinfo::System,
-    free: u64,
+    used: u64,
     total: u64,
     standard_model: segmented_button::SingleSelectModel,
     entity_si: Entity,
     entity_iec: Entity,
     update_interval_tx: watch::Sender<u64>,
+    live_config: CosmicAppletRamConfig,
+    config: Config,
+    // Exclusively UI state
     update_interval_text: String,
-    config: CosmicAppletRamConfig,
 }
+
+const VERSION: u64 = 1;
 
 #[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone, CosmicConfigEntry)]
 #[version = 1]
@@ -95,59 +98,81 @@ enum Message {
     Surface(surface::Action), // Actions that should be re-routed to COSMIC
 }
 
+trait ResultExt {
+    fn log<S: AsRef<str>>(self, msg: S);
+}
+
+impl <T, E: std::fmt::Display> ResultExt for std::result::Result<T, E> {
+    fn log<S: AsRef<str>>(self, msg: S) {
+        if let Err(error) = self {
+            tracing::error!("{}: {}", msg.as_ref(), error);
+        }
+    }
+}
+
+
 static AUTOSIZE_MAIN_ID: Lazy<widget::Id> = Lazy::new(|| widget::Id::new("autosize-main"));
 
 impl Window {
 
-    fn standard(&self) -> Standard {
-        *self.standard_model.active_data().unwrap()
+    /// Low-level utility to change the amount of milliseconds between each tick.
+    ///
+    /// This method does not save configuration.
+    fn set_ticks(&mut self, msec: u64) {
+        // Don't panic if the update could not be processed
+        let _ = self.update_interval_tx.send(msec);
     }
 
-    fn set_standard(&mut self, standard: Standard) {
+    /// Changes the standard with which counters are formatted.
+    ///
+    /// This method does not save configuration.
+    fn ui_set_standard(&mut self, standard: Standard) {
         self.standard_model.activate(
             match standard {
                 Standard::Si => self.entity_si,
                 Standard::Iec => self.entity_iec,
             }
         );
-        self.config.standard = standard;
+        self.live_config.standard = standard;
     }
 
-    fn set_update_interval_text(&mut self, text: String) {
-        if let Ok(msec) = text.parse::<u64>() {
-            if msec > 0 {
-                self.config.update_interval = msec;
-                // Don't panic if the update could not be processed
-                let _ = self.update_interval_tx.send(msec);
-            }
-        }
-        // Always mirror whatever was typed in the text input
-        self.update_interval_text = text;
-    }
-
-    fn set_prefix(&mut self, prefix: Prefix) {
-        self.config.prefix = prefix;
-    }
-
-    fn set_update_interval(&mut self, msec: u64) {
-        // Don't panic if the update could not be processed
-        let _ = self.update_interval_tx.send(msec);
-
-        self.config.update_interval = msec;
+    /// Changes the interval at which the UI updates to the given value.
+    ///
+    /// This method overrides whatever value was present in the text input. The text input will be
+    /// changed to reflect the given value.
+    ///
+    /// This method does not save configuration.
+    fn ui_set_update_interval(&mut self, msec: u64) {
+        self.live_config.update_interval = msec;
         self.update_interval_text = msec.to_string();
+        self.set_ticks(msec);
     }
 
-    fn set_precision(&mut self, precision: u32) {
-        self.config.precision = precision;
+    /// Changes the prefix with which counters are displayed.
+    ///
+    /// This method does not save configuration.
+    fn ui_set_prefix(&mut self, prefix: Prefix) {
+        self.live_config.prefix = prefix;
     }
 
-    fn set_show_total(&mut self, enable: bool) {
-        self.config.show_total = enable;
+    /// Changes the precision with which counters are formatted.
+    ///
+    /// This method does not save configuration.
+    fn ui_set_precision(&mut self, precision: u32) {
+        self.live_config.precision = precision;
     }
 
+    /// Change whether to display the total installed amount of RAM.
+    ///
+    /// This method does not save configuration.
+    fn ui_set_show_total(&mut self, enable: bool) {
+        self.live_config.show_total = enable;
+    }
+
+    /// Refresh the metrics that are rendered to the screen.
     fn refresh_metrics(&mut self) {
         self.sys.refresh_memory();
-        self.free = self.sys.used_memory();
+        self.used = self.sys.used_memory();
         self.total = self.sys.total_memory();
     }
 
@@ -195,24 +220,27 @@ impl cosmic::Application for Window {
             .text("IEC")
             .id();
 
-        let config = CosmicAppletRamConfig::default();
+        let config = Config::new(ID, VERSION).expect("failed to load config for RAM usage applet");
+
+        let live_config = CosmicAppletRamConfig::get_entry(&config).unwrap_or_default();
 
         let mut window = Window {
             core, // Set the incoming core
             popup: None, // No popup should be open on startup
             sys: System::new(),
-            free: 0,
+            used: 0,
             total: 0,
             standard_model,
             entity_si,
             entity_iec,
-            update_interval_tx: watch::Sender::new(config.update_interval),
-            update_interval_text: config.update_interval.to_string(),
+            update_interval_tx: watch::Sender::new(live_config.update_interval),
+            update_interval_text: live_config.update_interval.to_string(),
+            live_config,
             config,
         };
 
         // Force the segmented control to select its initial value
-        window.set_standard(window.config.standard);
+        window.ui_set_standard(window.live_config.standard);
 
         // Immediately load statistics when the application loads
         window.refresh_metrics();
@@ -242,12 +270,7 @@ impl cosmic::Application for Window {
                     loop {
                         tokio::select! {
                             _ = timer.tick() => {
-                                #[cfg(debug_assertions)]
-                                if let Err(err) = output.send(Message::Tick).await {
-                                    tracing::error!(?err, "Failed sending tick request to applet");
-                                }
-                                #[cfg(not(debug_assertions))]
-                                let _ = output.send(Message::Tick).await;
+                                output.send(Message::Tick).await.log("Failed sending tick request to applet");
                             },
                             // Update timer if the user toggles show_seconds
                             Ok(()) = msec_watch.changed() => {
@@ -264,12 +287,14 @@ impl cosmic::Application for Window {
         }
         let show_seconds_rx = self.update_interval_tx.subscribe();
         Subscription::batch(vec![
-            self.core.watch_config(Self::APP_ID).map(|u| {
-                for err in u.errors {
-                    tracing::error!(?err, "Error watching config");
-                }
-                Message::ConfigChanged(u.config)
-            }),
+            self.core
+                .watch_config(Self::APP_ID)
+                .map(|u| {
+                    for err in u.errors {
+                        tracing::error!(?err, "Error watching config");
+                    }
+                    Message::ConfigChanged(u.config)
+                }),
             time_subscription(show_seconds_rx),
         ])
     }
@@ -321,33 +346,63 @@ impl cosmic::Application for Window {
                 self.refresh_metrics();
             }
             Message::UpdatePrecision(prec) => {
-                self.set_precision(prec);
+                self.live_config
+                    .set_precision(&self.config, prec)
+                    .log("Failed to save applet configuration");
+                self.ui_set_precision(prec);
                 self.refresh_metrics();
             }
             Message::UpdateStandard(standard) => {
-                self.set_standard(standard);
+                self.live_config
+                    .set_standard(&self.config, standard)
+                    .log("Failed to save applet configuration");
+                self.ui_set_standard(standard);
                 self.refresh_metrics();
             }
             Message::UpdateShowTotal(enable) => {
-                self.set_show_total(enable);
+                self.live_config
+                    .set_show_total(&self.config, enable)
+                    .log("Failed to save applet configuration");
+                self.ui_set_show_total(enable);
                 self.refresh_metrics();
             }
             Message::UpdatePrefix(prefix) => {
-                self.set_prefix(prefix);
+                self.live_config
+                    .set_prefix(&self.config, prefix)
+                    .log("Failed to save applet configuration");
+                self.ui_set_prefix(prefix);
                 self.refresh_metrics();
             }
             Message::UpdateInterval(text) => {
-                self.set_update_interval_text(text);
+                if let Ok(msec) = text.parse::<u64>() {
+                    if msec > 0 {
+                        self.live_config
+                            .set_update_interval(&self.config, msec)
+                            .log("save configuration failed");
+                        self.set_ticks(msec);
+                    }
+                }
+                self.update_interval_text = text;
             }
             Message::Surface(a) => return cosmic::task::message(cosmic::Action::Cosmic(
                 cosmic::app::Action::Surface(a)
             )),
             Message::ConfigChanged(config) => {
-                self.set_precision(config.precision);
-                self.set_prefix(config.prefix);
-                self.set_show_total(config.show_total);
-                self.set_standard(config.standard);
-                self.set_update_interval(config.update_interval);
+                if config.precision != self.live_config.precision {
+                    self.ui_set_precision(config.precision);
+                }
+                if config.prefix != self.live_config.prefix {
+                    self.ui_set_prefix(config.prefix);
+                }
+                if config.show_total != self.live_config.show_total {
+                    self.ui_set_show_total(config.show_total);
+                }
+                if config.standard != self.live_config.standard {
+                    self.ui_set_standard(config.standard);
+                }
+                if config.update_interval != self.live_config.update_interval {
+                    self.ui_set_update_interval(config.update_interval);
+                }
             }
         }
         Task::none() // Again not doing anything that requires multi-threading here.
@@ -367,12 +422,26 @@ impl cosmic::Application for Window {
         let padding = self.core.applet.suggested_padding(false);
         let icon = container(icon::from_name("display-symbolic"))
             .padding(padding);
-        let usage = self.core.applet.text(format_bytes(self.free, self.standard(), self.config.prefix, self.config.precision));
+        let usage = self.core.applet.text(
+            format_bytes(
+                self.used,
+                self.live_config.standard,
+                self.live_config.prefix,
+                self.live_config.precision
+            )
+        );
         let mut children = vec![
             Element::from(icon), Element::from(usage)
         ];
-        if self.config.show_total {
-            let total = self.core.applet.text(format_bytes(self.total, self.standard(), self.config.prefix, self.config.precision));
+        if self.live_config.show_total {
+            let total = self.core.applet.text(
+                format_bytes(
+                    self.total,
+                    self.live_config.standard,
+                    self.live_config.prefix,
+                    self.live_config.precision
+                )
+            );
             children.push(Element::from(self.core.applet.text(" / ")));
             children.push(Element::from(total));
         }
@@ -433,7 +502,7 @@ impl cosmic::Application for Window {
                 popup_dropdown(
                     &PREFIX_MENU_ITEMS,
                     Some(
-                        match self.config.prefix {
+                        match self.live_config.prefix {
                             Prefix::Auto => 0,
                             Prefix::None => 1,
                             Prefix::Kilo => 2,
@@ -469,8 +538,8 @@ impl cosmic::Application for Window {
             settings::item(
                 "Precision",
                 spin_button(
-                    format!("{}", self.config.precision),
-                    self.config.precision,
+                    format!("{}", self.live_config.precision),
+                    self.live_config.precision,
                     1,
                     0,
                     10,
@@ -479,7 +548,7 @@ impl cosmic::Application for Window {
             ),
             settings::item(
                 "Show Total",
-                checkbox("", self.config.show_total)
+                checkbox("", self.live_config.show_total)
                     .on_toggle(Message::UpdateShowTotal)
             ),
         ]
