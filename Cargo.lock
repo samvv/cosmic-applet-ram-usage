@@ -939,6 +939,7 @@ dependencies = [
  "chrono",
  "libcosmic",
  "once_cell",
+ "serde",
  "sysinfo",
  "tokio",
  "tracing",
