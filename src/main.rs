@@ -317,15 +317,15 @@ impl cosmic::Application for Window {
                     self.popup = None;
                 }
             }
+            Message::Tick => {
+                self.refresh_metrics();
+            }
             Message::UpdatePrecision(prec) => {
                 self.set_precision(prec);
                 self.refresh_metrics();
             }
             Message::UpdateStandard(standard) => {
                 self.set_standard(standard);
-                self.refresh_metrics();
-            }
-            Message::Tick => {
                 self.refresh_metrics();
             }
             Message::UpdateShowTotal(enable) => {
@@ -364,8 +364,9 @@ impl cosmic::Application for Window {
             PanelAnchor::Top | PanelAnchor::Bottom
         );
 
-        let icon = button::icon(icon::from_name("display-symbolic"))
-            .on_press(Message::TogglePopup);
+        let padding = self.core.applet.suggested_padding(false);
+        let icon = container(icon::from_name("display-symbolic"))
+            .padding(padding);
         let usage = self.core.applet.text(format_bytes(self.free, self.standard(), self.config.prefix, self.config.precision));
         let mut children = vec![
             Element::from(icon), Element::from(usage)
@@ -403,6 +404,10 @@ impl cosmic::Application for Window {
         // Needed to compare later on which control is selected
         let entity_iec = self.entity_iec.clone();
         let entity_si = self.entity_si.clone();
+
+        let cosmic::cosmic_theme::Spacing {
+            space_s, ..
+        } = cosmic::theme::spacing();
 
         let content_list = column![
             settings::item(
@@ -478,13 +483,12 @@ impl cosmic::Application for Window {
                     .on_toggle(Message::UpdateShowTotal)
             ),
         ]
-        .padding(5)
-        .spacing(0);
+        .spacing(space_s);
 
         // Set the widget content list as the popup_container for the applet
         self.core
             .applet
-            .popup_container(container(content_list))
+            .popup_container(container(content_list).padding(space_s))
             .into()
     }
 }
