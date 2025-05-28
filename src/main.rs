@@ -46,7 +46,7 @@ struct Window {
     sys: sysinfo::System,
     free: u64,
     standard_model: segmented_button::SingleSelectModel,
-    prefix: Option<usize>,
+    prefix: usize,
     update_interval_tx: watch::Sender<u64>,
     update_interval_text: String,
     precision: u32,
@@ -126,6 +126,7 @@ impl cosmic::Application for Window {
             core, // Set the incoming core
             sys: System::new(),
             standard_model,
+            prefix: 0,
             update_interval_tx: watch::Sender::new(DEFAULT_UPDATE_INTERVAL),
             update_interval_text: DEFAULT_UPDATE_INTERVAL.to_string(),
             ..Default::default() // Set everything else to the default values
@@ -237,7 +238,7 @@ impl cosmic::Application for Window {
                 cosmic::app::Action::Surface(a)
             )), // FIXME No idea what this should do
             // Update the prefix with which the bytes are displayed
-            Message::UpdatePrefix(prefix) => self.prefix = Some(prefix),
+            Message::UpdatePrefix(prefix) => self.prefix = prefix,
             Message::UpdateInterval(text) => {
                 if let Ok(msec) = text.parse::<u64>() {
                     if msec > 0 {
@@ -263,13 +264,12 @@ impl cosmic::Application for Window {
         );
 
         let prefix = match self.prefix {
-            None => Default::default(),
-            Some(0) => Prefix::Auto,
-            Some(1) => Prefix::None,
-            Some(2) => Prefix::Kilo,
-            Some(3) => Prefix::Mega,
-            Some(4) => Prefix::Giga,
-            Some(5) => Prefix::Tera,
+            0 => Prefix::Auto,
+            1 => Prefix::None,
+            2 => Prefix::Kilo,
+            3 => Prefix::Mega,
+            4 => Prefix::Giga,
+            5 => Prefix::Tera,
             // 6 => Prefix::Peta,
             // 7 => Prefix::Exa,
             // 8 => Prefix::Zeta,
@@ -314,7 +314,7 @@ impl cosmic::Application for Window {
                 "Prefix",
                 popup_dropdown(
                     &PREFIX_MENU_ITEMS,
-                    self.prefix,
+                    Some(self.prefix),
                     Message::UpdatePrefix,
                     self.popup.unwrap(),
                     Message::Surface,
