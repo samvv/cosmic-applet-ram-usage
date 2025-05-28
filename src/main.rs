@@ -11,14 +11,14 @@ use cosmic::iced::{
     Limits,
 };
 use cosmic::iced_runtime::core::window;
-use cosmic::iced_widget::{column, row, text_input};
+use cosmic::iced_widget::column;
 use cosmic::widget::dropdown::popup_dropdown;
 use cosmic::widget::segmented_button::{Entity, SingleSelectModel};
 use cosmic::{surface, Element};
 use cosmic::app::Task;
 
 // Widgets we're going to use
-use cosmic::widget::{autosize, button, container, icon, radio, segmented_button, segmented_control, settings, spin_button};
+use cosmic::widget::{autosize, button, checkbox, text_input, container, icon, segmented_button, segmented_control, settings, spin_button};
 
 use once_cell::sync::Lazy;
 use sysinfo::System;
@@ -45,23 +45,26 @@ struct Window {
     popup: Option<window::Id>,
     sys: sysinfo::System,
     free: u64,
+    total: u64,
     standard_model: segmented_button::SingleSelectModel,
     prefix: usize,
     update_interval_tx: watch::Sender<u64>,
     update_interval_text: String,
     precision: u32,
+    enable_show_total: bool,
 }
 
 #[derive(Clone, Debug)]
 enum Message {
-    Tick,
+    Tick, // Triggered on a user-defined interval
     TogglePopup, // Mandatory for open and close the applet
     PopupClosed(window::Id), // Mandatory for the applet to know if it's been closed
     UpdateStandard(Entity), // The user changed the standard in which byte counts are presented
     UpdatePrecision(u32), // The user adjusted the precision of the byte counts
     UpdatePrefix(usize), // The user changed the prefix with which byte counts are presented
-    UpdateInterval(String),
-    Surface(surface::Action),
+    UpdateInterval(String), // The user changed the interval with which the data is updated
+    UpdateShowTotal(bool), // The user toggled whether to show total RAM
+    Surface(surface::Action), // Actions that should be re-routed to COSMIC
 }
 
 static AUTOSIZE_MAIN_ID: Lazy<widget::Id> = Lazy::new(|| widget::Id::new("autosize-main"));
@@ -75,6 +78,7 @@ impl Window {
     fn refresh(&mut self) {
         self.sys.refresh_memory();
         self.free = self.sys.used_memory();
+        self.total = self.sys.total_memory();
     }
 
 }
@@ -87,7 +91,7 @@ impl cosmic::Application for Window {
     *  Tasks take place.
     */
     type Executor = cosmic::SingleThreadExecutor;
-    type Flags = (); // Honestly not sure what these are for.
+    type Flags = (); // Argument passed to init()
     type Message = Message; // These are setting the application messages to our Message enum
     const APP_ID: &'static str = ID; // This is where we set our const above to the actual ID
 
@@ -122,7 +126,7 @@ impl cosmic::Application for Window {
             .id();
         standard_model.activate(iec_entity);
 
-        let window = Window {
+        let mut window = Window {
             core, // Set the incoming core
             sys: System::new(),
             standard_model,
@@ -131,6 +135,9 @@ impl cosmic::Application for Window {
             update_interval_text: DEFAULT_UPDATE_INTERVAL.to_string(),
             ..Default::default() // Set everything else to the default values
         };
+
+        // Immediately load statistics when the application loads
+        window.refresh();
 
         (window, Task::none())
     }
@@ -234,6 +241,9 @@ impl cosmic::Application for Window {
             Message::Tick => {
                 self.refresh();
             }
+            Message::UpdateShowTotal(enable) => {
+                self.enable_show_total = enable;
+            }
             Message::Surface(a) => return cosmic::task::message(cosmic::Action::Cosmic(
                 cosmic::app::Action::Surface(a)
             )), // FIXME No idea what this should do
@@ -278,15 +288,27 @@ impl cosmic::Application for Window {
         };
         let icon = button::icon(icon::from_name("display-symbolic"))
             .on_press(Message::TogglePopup);
-        let metric = button::custom(
-            self.core.applet.text(format_bytes(self.free, self.standard(), prefix, self.precision))
-        );
-        autosize::autosize(
+        let usage = self.core.applet.text(format_bytes(self.free, self.standard(), prefix, self.precision));
+        let mut children = vec![
+            Element::from(icon), Element::from(usage)
+        ];
+        if self.enable_show_total {
+            let total = self.core.applet.text(format_bytes(self.total, self.standard(), prefix, self.precision));
+            children.push(Element::from(self.core.applet.text(" / ")));
+            children.push(Element::from(total));
+        }
+        let button = button::custom(
             if horizontal {
-                Element::from(row![ icon, metric ])
+                Element::from(cosmic::widget::row::with_children(children))
             } else {
-                Element::from(column![icon, metric ])
+                Element::from(cosmic::widget::column::with_children(children))
             },
+        )
+        .on_press_down(Message::TogglePopup)
+        .class(cosmic::theme::Button::AppletIcon);
+
+        autosize::autosize(
+            button,
             AUTOSIZE_MAIN_ID.clone()
         )
         .into()
@@ -316,22 +338,10 @@ impl cosmic::Application for Window {
                     &PREFIX_MENU_ITEMS,
                     Some(self.prefix),
                     Message::UpdatePrefix,
-                    self.popup.unwrap(),
+                    self.popup.unwrap_or(window::Id::RESERVED),
                     Message::Surface,
                     |a| a,
                 )
-                // row![
-                //     radio("Auto", Prefix::Auto, self.prefix, Message::UpdatePrefix),
-                //     radio("None", Prefix::None, self.prefix, Message::UpdatePrefix),
-                //     radio("Kilo", Prefix::Kilo, self.prefix, Message::UpdatePrefix),
-                //     radio("Mega", Prefix::Mega, self.prefix, Message::UpdatePrefix),
-                //     radio("Giga", Prefix::Giga, self.prefix, Message::UpdatePrefix),
-                //     radio("Tera", Prefix::Tera, self.prefix, Message::UpdatePrefix),
-                //     // radio("Peta", Prefix::Peta, self.prefix, Message::PrefixSelected),
-                //     // radio("Exa", Prefix::Exa, self.prefix, Message::PrefixSelected),
-                //     // radio("Zeta", Prefix::Zeta, self.prefix, Message::PrefixSelected),
-                //     // radio("Yotta", Prefix::Yotta, self.prefix, Message::PrefixSelected),
-                // ],
             ),
             settings::item(
                 "Precision",
@@ -343,6 +353,11 @@ impl cosmic::Application for Window {
                     10,
                     Message::UpdatePrecision,
                 ),
+            ),
+            settings::item(
+                "Show Total",
+                checkbox("", self.enable_show_total)
+                    .on_toggle(Message::UpdateShowTotal)
             ),
         ]
         .padding(5)
