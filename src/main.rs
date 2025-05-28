@@ -43,13 +43,13 @@ const DEFAULT_UPDATE_INTERVAL: u64 = 1000;
 struct Window {
     core: Core,
     popup: Option<window::Id>,
+    sys: sysinfo::System,
     free: u64,
     standard_model: segmented_button::SingleSelectModel,
     prefix: Option<usize>,
-    sys: sysinfo::System,
-    seconds_tx: watch::Sender<u64>,
+    update_interval_tx: watch::Sender<u64>,
+    update_interval_text: String,
     precision: u32,
-    interval: String,
 }
 
 #[derive(Clone, Debug)]
@@ -126,8 +126,8 @@ impl cosmic::Application for Window {
             core, // Set the incoming core
             sys: System::new(),
             standard_model,
-            seconds_tx: watch::Sender::new(DEFAULT_UPDATE_INTERVAL),
-            interval: DEFAULT_UPDATE_INTERVAL.to_string(),
+            update_interval_tx: watch::Sender::new(DEFAULT_UPDATE_INTERVAL),
+            update_interval_text: DEFAULT_UPDATE_INTERVAL.to_string(),
             ..Default::default() // Set everything else to the default values
         };
 
@@ -141,14 +141,14 @@ impl cosmic::Application for Window {
     }
 
     fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
-        fn time_subscription(mut seconds_watch: watch::Receiver<u64>) -> Subscription<Message> {
+        fn time_subscription(mut msec_watch: watch::Receiver<u64>) -> Subscription<Message> {
             Subscription::run_with_id(
                 "time-sub",
                 stream::channel(1, |mut output| async move {
                     // Mark this receiver's state as changed so that it always receives an initial
                     // update during the loop below
                     // This allows us to avoid duplicating code from the loop
-                    seconds_watch.mark_changed();
+                    msec_watch.mark_changed();
                     let mut msec = 1000;
                     let mut timer = time::interval(time::Duration::from_millis(msec));
                     timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -164,8 +164,8 @@ impl cosmic::Application for Window {
                                 let _ = output.send(Message::Tick).await;
                             },
                             // Update timer if the user toggles show_seconds
-                            Ok(()) = seconds_watch.changed() => {
-                                msec = *seconds_watch.borrow_and_update();
+                            Ok(()) = msec_watch.changed() => {
+                                msec = *msec_watch.borrow_and_update();
                                 let period = time::Duration::from_millis(msec);
                                 let start = time::Instant::now() + period;
                                 timer = time::interval_at(start, period);
@@ -176,7 +176,7 @@ impl cosmic::Application for Window {
                 }),
             )
         }
-        let show_seconds_rx = self.seconds_tx.subscribe();
+        let show_seconds_rx = self.update_interval_tx.subscribe();
         time_subscription(show_seconds_rx)
     }
 
@@ -242,10 +242,10 @@ impl cosmic::Application for Window {
                 if let Ok(msec) = text.parse::<u64>() {
                     if msec > 0 {
                         // Don't panic if the update could not be processed
-                        let _ = self.seconds_tx.send(msec);
+                        let _ = self.update_interval_tx.send(msec);
                     }
                 }
-                self.interval = text;
+                self.update_interval_text = text;
             }
         }
         Task::none() // Again not doing anything that requires multi-threading here.
@@ -302,7 +302,7 @@ impl cosmic::Application for Window {
         let content_list = column![
             settings::item(
                 "Update Interval (in ms)",
-                text_input("", &self.interval)
+                text_input("", &self.update_interval_text)
                     .on_input(Message::UpdateInterval),
             ),
             settings::item(
@@ -316,7 +316,7 @@ impl cosmic::Application for Window {
                     &PREFIX_MENU_ITEMS,
                     self.prefix,
                     Message::UpdatePrefix,
-                    window::Id::RESERVED,
+                    self.popup.unwrap(),
                     Message::Surface,
                     |a| a,
                 )
